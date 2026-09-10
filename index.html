@@ -401,7 +401,7 @@
       <h2>Parent settings</h2>
       <button class="close-btn" id="closeSettingsBtn" aria-label="Close">✕</button>
     </div>
-    <p class="settings-tip">Tip: to get back here, count the 7 ice creams above left to right, then tap #2, #7, #1 in that order, then press and hold #4 for 2 seconds.</p>
+    <p class="settings-tip">Tip: to get back here, count the 7 ice creams above left to right, then tap #7, #1, #7, #1, #7, #1.</p>
 
     <div class="goal-row" style="flex-direction:column; align-items:stretch; gap:8px;">
       <span class="goal-label">Stars to fill one ice cream</span>
@@ -497,6 +497,7 @@
     behaviors: DEFAULT_BEHAVIORS.map(b => ({...b})),
     armedId: null,
     currentStars: 0,
+    currentStarColors: [],
     goalStars: 10,
     slotsFilled: 0,
     allTimeStars: 0,
@@ -896,7 +897,8 @@
       // drop zone clears before the next star arrives there - this is
       // just a live pour, silently sped up, instead of a separate,
       // less-tested distribution scheme.
-      spawnOneStar('#ffc94a');
+      const color = state.currentStarColors[i] || '#ffc94a';
+      spawnOneStar(color);
       for(let s=0; s<10; s++) stepPhysics(1/60);
     }
     for(let s=0; s<120; s++) stepPhysics(1/60);
@@ -936,6 +938,15 @@
         "This browser is blocking saved data, so progress won't survive a refresh.";
     }
     state.behaviors.forEach(b => { b.color = resolveColor(b.color); });
+
+    // Backfill for saves made before per-star colors were tracked (or if
+    // the count and color list ever drift apart) - pad/trim so the color
+    // list always matches how many stars are actually in the jar.
+    if(!Array.isArray(state.currentStarColors)) state.currentStarColors = [];
+    while(state.currentStarColors.length < state.currentStars){
+      state.currentStarColors.push('#ffc94a');
+    }
+    state.currentStarColors.length = state.currentStars;
   }
   async function saveState(){
     if(localStorageOK){
@@ -1171,6 +1182,10 @@
     const added = state.currentStars - before;
     state.allTimeStars += behavior.stars;
     coneWrap.classList.remove('armed');
+
+    const behaviorColor = resolveColor(behavior.color);
+    for(let i=0;i<added;i++) state.currentStarColors.push(behaviorColor);
+
     renderStats();
     saveState();
 
@@ -1179,8 +1194,8 @@
 
     if(added > 0){
       coneWrap.style.pointerEvents = 'none';
-      await showStarPreview(added, resolveColor(behavior.color));
-      await addStars(added, resolveColor(behavior.color));
+      await showStarPreview(added, behaviorColor);
+      await addStars(added, behaviorColor);
       // let the last poured stars actually fall and settle before revealing
       // the finished ice cream, instead of cutting straight to the reveal.
       await new Promise(r => setTimeout(r, 550));
@@ -1257,6 +1272,7 @@
         // rather than rebuilding the whole row and losing it)
         state.slotsFilled = Math.min(7, state.slotsFilled + 1);
         state.currentStars = 0;
+        state.currentStarColors = [];
         clearStars();
         targetSlot.classList.add('filled');
         targetSlot.style.filter = '';
@@ -1304,16 +1320,12 @@
   });
 
   // ---------- secret parent gesture: the 7 ice cream slots act like a
-  // keypad, numbered 1-7 left to right. Tap #2, then #7, then #1, then
-  // press and hold #4 for 2 seconds.
-  const SECRET_SEQUENCE = [2, 7, 1];
-  const SECRET_HOLD_SLOT = 4;
+  // keypad, numbered 1-7 left to right. Tap #7, #1, #7, #1, #7, #1.
+  const SECRET_SEQUENCE = [7, 1, 7, 1, 7, 1];
   let secretStage = 0;
-  let secretHoldTimer = null;
 
   function resetSecretStage(){
     secretStage = 0;
-    if(secretHoldTimer){ clearTimeout(secretHoldTimer); secretHoldTimer = null; }
   }
 
   const slotsRowEl = document.getElementById('slotsRow');
@@ -1322,26 +1334,15 @@
     if(!slotEl) return;
     const num = Array.from(slotsRowEl.children).indexOf(slotEl) + 1;
 
-    if(secretStage < SECRET_SEQUENCE.length){
-      if(num === SECRET_SEQUENCE[secretStage]){
-        secretStage++;
-      } else {
-        secretStage = (num === SECRET_SEQUENCE[0]) ? 1 : 0;
-      }
-    } else if(num === SECRET_HOLD_SLOT){
-      secretHoldTimer = setTimeout(()=>{
-        secretHoldTimer = null;
+    if(num === SECRET_SEQUENCE[secretStage]){
+      secretStage++;
+      if(secretStage === SECRET_SEQUENCE.length){
         resetSecretStage();
         openSettings();
-      }, 2000);
+      }
     } else {
       secretStage = (num === SECRET_SEQUENCE[0]) ? 1 : 0;
     }
-  });
-  ['pointerup','pointerleave','pointercancel'].forEach(evt=>{
-    document.addEventListener(evt, ()=>{
-      if(secretHoldTimer){ clearTimeout(secretHoldTimer); secretHoldTimer = null; resetSecretStage(); }
-    });
   });
 
   // ---------- settings overlay ----------
@@ -1453,6 +1454,7 @@
     if(state.currentStars === 0) return;
     if(!confirm('Reset the current ice cream back to empty?')) return;
     state.currentStars = 0;
+    state.currentStarColors = [];
     clearStars();
     resetConeVisual();
     renderCone(); renderStats(); saveState();
