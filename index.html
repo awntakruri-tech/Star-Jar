@@ -1412,6 +1412,15 @@
       if(state.armedId === id) state.armedId = null;
     } else if(action === 'arm'){
       state.armedId = (state.armedId === id) ? null : id;
+      if(state.armedId === id){
+        // just armed it - close immediately so the phone is ready to hand
+        // straight to the kid, no extra tap needed
+        renderSettingsList();
+        renderCone();
+        saveState();
+        closeSettings();
+        return;
+      }
     }
     renderSettingsList();
     renderCone();
