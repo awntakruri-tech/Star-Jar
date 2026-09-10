@@ -589,6 +589,7 @@
       }
       resolveWallCollisions();
       resolveStarCollisions();
+      resolveWallCollisions(); // catch anything a star-on-star push just shoved into/through a wall
 
       for(const star of physics.stars){
         if(star.sleeping) continue;
@@ -888,23 +889,17 @@
 
   function syncStarsInstant(count){
     physics.stars = [];
-    const jitterRange = Math.max(2, 9 - STAR_R * 0.4);
     for(let i=0;i<count;i++){
-      const jitter = (Math.random()-0.5) * jitterRange;
-      const p = safeSpawnPoint(POUR_POINT.x + jitter, POUR_POINT.y - 8 - i*3, STAR_R + 3);
-      physics.stars.push({
-        x: p.x, y: p.y,
-        vx: 0, vy: 0,
-        angle: Math.random() * Math.PI,
-        angularVel: 0,
-        color: '#ffc94a',
-        sleeping: false,
-        restTime: 0,
-        settleClock: 0,
-        settleX: p.x,
-        settleY: p.y
-      });
+      // Reuse the exact same safe spawn logic a single live star uses
+      // (rather than trying to pre-compute a spread-out layout by hand),
+      // and fast-forward a little physics time between each one so the
+      // drop zone clears before the next star arrives there - this is
+      // just a live pour, silently sped up, instead of a separate,
+      // less-tested distribution scheme.
+      spawnOneStar('#ffc94a');
+      for(let s=0; s<10; s++) stepPhysics(1/60);
     }
+    for(let s=0; s<120; s++) stepPhysics(1/60);
   }
 
   function clearStars(){
