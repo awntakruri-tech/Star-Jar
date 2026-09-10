@@ -1321,18 +1321,28 @@
 
   // ---------- secret parent gesture: the 7 ice cream slots act like a
   // keypad, numbered 1-7 left to right. Tap #7, #1, #7, #1, #7, #1.
+  // Any tap that isn't exactly the next expected slot - including taps on
+  // the ice cream or anywhere else on screen - resets the whole sequence.
+  // Waiting more than 2 seconds between taps also resets it.
   const SECRET_SEQUENCE = [7, 1, 7, 1, 7, 1];
+  const SECRET_TAP_TIMEOUT = 2000;
   let secretStage = 0;
+  let secretLastTapTime = 0;
 
   function resetSecretStage(){
     secretStage = 0;
   }
 
   const slotsRowEl = document.getElementById('slotsRow');
-  slotsRowEl.addEventListener('pointerdown', (e)=>{
+  document.addEventListener('pointerdown', (e)=>{
+    const now = Date.now();
+    if(secretStage > 0 && (now - secretLastTapTime) > SECRET_TAP_TIMEOUT){
+      resetSecretStage();
+    }
+    secretLastTapTime = now;
+
     const slotEl = e.target.closest('.slot');
-    if(!slotEl) return;
-    const num = Array.from(slotsRowEl.children).indexOf(slotEl) + 1;
+    const num = slotEl ? Array.from(slotsRowEl.children).indexOf(slotEl) + 1 : -1;
 
     if(num === SECRET_SEQUENCE[secretStage]){
       secretStage++;
@@ -1341,18 +1351,20 @@
         openSettings();
       }
     } else {
-      secretStage = (num === SECRET_SEQUENCE[0]) ? 1 : 0;
+      resetSecretStage();
     }
-  });
+  }, true);
 
   // ---------- settings overlay ----------
   const overlay = document.getElementById('settingsOverlay');
+  let settingsOpenedAt = 0;
   function openSettings(){
     renderSettingsList();
     renderStats();
     document.getElementById('starSizeSlider').value = state.starSize;
     document.getElementById('starSizeValue').textContent = state.starSize.toFixed(1);
     overlay.classList.add('open');
+    settingsOpenedAt = Date.now();
   }
   function closeSettings(){
     overlay.classList.remove('open');
@@ -1366,7 +1378,13 @@
     document.getElementById('starSizeValue').textContent = STAR_R.toFixed(1);
     saveState();
   });
-  overlay.addEventListener('click', (e)=>{ if(e.target === overlay) closeSettings(); });
+  overlay.addEventListener('click', (e)=>{
+    // ignore the tail end of the same touch/click that just opened the
+    // panel - otherwise the release from the gesture's last tap can land
+    // on the backdrop and instantly close what it just opened.
+    if(Date.now() - settingsOpenedAt < 400) return;
+    if(e.target === overlay) closeSettings();
+  });
   document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') closeSettings(); });
 
   // ---------- goal slider ----------
