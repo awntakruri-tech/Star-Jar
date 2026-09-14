@@ -330,6 +330,10 @@
     height:6px; border-radius:4px;
     background:#e5d7ee; outline:none;
     accent-color:var(--star, #ffc94a);
+    /* Vertical swipes should scroll the parent settings panel rather than
+       accidentally changing the slider value. */
+    touch-action:pan-y;
+    user-select:none;
   }
   input[type=range]::-webkit-slider-thumb{
     -webkit-appearance:none; appearance:none;
@@ -432,7 +436,7 @@
     <div class="goal-row" style="flex-direction:column; align-items:stretch; gap:8px;">
       <span class="goal-label" id="goalLabel">Stars to fill one ice cream</span>
       <div class="slider-row">
-        <input type="range" id="goalSlider" min="3" max="50" step="1" value="10">
+        <input type="range" id="goalSlider" min="3" max="100" step="1" value="10">
         <span class="slider-value" id="goalValue">10</span>
       </div>
     </div>
@@ -665,10 +669,10 @@
     requestAnimationFrame(loop);
   }
 
-  const REMOVE_FADE_DELAY_MS = 260; // remain fully visible while the star starts floating
+  const REMOVE_FADE_DELAY_MS = 420; // remain fully visible while the star floats away
   const REMOVE_FADE_MS = 520;
   const REMOVE_TOTAL_MS = REMOVE_FADE_DELAY_MS + REMOVE_FADE_MS;
-  const REMOVE_RISE_DIST = 34; // world units a star floats upward while fading out
+  const REMOVE_RISE_DIST = 64; // world units a star floats upward while fading out
   function processRemovals(now){
     for(let i = physics.stars.length - 1; i >= 0; i--){
       const star = physics.stars[i];
@@ -1620,6 +1624,47 @@
     renderCone();
   }
   document.getElementById('closeSettingsBtn').addEventListener('click', closeSettings);
+
+  // On touch screens, distinguish a horizontal slider drag from a vertical
+  // swipe meant to scroll the parent options panel. Native range controls can
+  // otherwise change value during a vertical navigation gesture.
+  let activeRangeGesture = null;
+  document.addEventListener('pointerdown', (e)=>{
+    const input = e.target.closest && e.target.closest('input[type=range]');
+    if(!input) return;
+    activeRangeGesture = {
+      input,
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startValue: input.value,
+      cancelled: false
+    };
+  }, true);
+  document.addEventListener('pointermove', (e)=>{
+    const gesture = activeRangeGesture;
+    if(!gesture || gesture.pointerId !== e.pointerId || gesture.cancelled) return;
+    const dx = Math.abs(e.clientX - gesture.startX);
+    const dy = Math.abs(e.clientY - gesture.startY);
+    if(dy > 8 && dy > dx){
+      gesture.cancelled = true;
+      gesture.input.value = gesture.startValue;
+      gesture.input.dispatchEvent(new Event('input', {bubbles:true}));
+      gesture.input.disabled = true;
+    }
+  }, true);
+  function finishRangeGesture(e){
+    if(!activeRangeGesture || activeRangeGesture.pointerId !== e.pointerId) return;
+    const gesture = activeRangeGesture;
+    activeRangeGesture = null;
+    if(gesture.cancelled){
+      gesture.input.disabled = false;
+      gesture.input.value = gesture.startValue;
+    }
+  }
+  document.addEventListener('pointerup', finishRangeGesture, true);
+  document.addEventListener('pointercancel', finishRangeGesture, true);
+
   document.getElementById('starSizeSlider').addEventListener('input', (e)=>{
     STAR_R = parseFloat(e.target.value);
     state.starSize = STAR_R;
