@@ -665,13 +665,15 @@
     requestAnimationFrame(loop);
   }
 
-  const REMOVE_FADE_MS = 480;
+  const REMOVE_FADE_DELAY_MS = 260; // remain fully visible while the star starts floating
+  const REMOVE_FADE_MS = 520;
+  const REMOVE_TOTAL_MS = REMOVE_FADE_DELAY_MS + REMOVE_FADE_MS;
   const REMOVE_RISE_DIST = 34; // world units a star floats upward while fading out
   function processRemovals(now){
     for(let i = physics.stars.length - 1; i >= 0; i--){
       const star = physics.stars[i];
       if(!star.removing) continue;
-      if(now - star.removeStart >= REMOVE_FADE_MS){
+      if(now - star.removeStart >= REMOVE_TOTAL_MS){
         physics.stars.splice(i, 1);
       }
     }
@@ -686,6 +688,21 @@
     physics.canvas.width = Math.max(1, Math.round(rect.width * dpr));
     physics.canvas.height = Math.max(1, Math.round(rect.height * dpr));
     physics.scale = (rect.width * dpr) / WORLD_W;
+  }
+
+  // STAR_R is the user-facing size in the settings. Convert it to the
+  // active prize's world units so the same setting produces the same
+  // on-screen star size even though the ice cream and chips use different
+  // coordinate widths and display sizes.
+  function effectiveStarRadius(){
+    const rect = document.getElementById('coneWrap').getBoundingClientRect();
+    const activePixelsPerWorld = rect.width > 0 ? rect.width / WORLD_W : 1;
+    const referenceDisplayWidth = Math.min(
+      window.innerWidth * PRIZES.icecream.displayVw / 100,
+      PRIZES.icecream.displayPx
+    );
+    const referencePixelsPerWorld = referenceDisplayWidth / PRIZES.icecream.worldW;
+    return STAR_R * referencePixelsPerWorld / activePixelsPerWorld;
   }
 
   const GRAVITY = 620;
@@ -756,6 +773,7 @@
   }
 
   function resolveWallCollisions(){
+    const starRadius = effectiveStarRadius();
     for(const star of physics.stars){
       if(star.sleeping || star.removing) continue;
       for(const e of physics.edges){
@@ -766,11 +784,11 @@
         const cxp = e.ax + abx*t, cyp = e.ay + aby*t;
         const dx = star.x - cxp, dy = star.y - cyp;
         const dist = Math.hypot(dx, dy);
-        if(dist < STAR_R){
+        if(dist < starRadius){
           let nx, ny;
           if(dist > 1e-6){ nx = dx/dist; ny = dy/dist; }
           else { nx = -e.nx; ny = -e.ny; }
-          const penetration = STAR_R - dist;
+          const penetration = starRadius - dist;
           star.x += nx * penetration;
           star.y += ny * penetration;
           const vn = star.vx*nx + star.vy*ny;
@@ -796,6 +814,7 @@
   }
 
   function resolveStarCollisions(){
+    const starRadius = effectiveStarRadius();
     const n = physics.stars.length;
     for(let i=0;i<n;i++){
       const a = physics.stars[i];
@@ -806,7 +825,7 @@
         if(aFrozen && bFrozen) continue;
         const dx = b.x-a.x, dy = b.y-a.y;
         const dist = Math.hypot(dx, dy);
-        const minDist = STAR_R*2*0.82;
+        const minDist = starRadius*2*0.82;
         if(dist < minDist && dist > 1e-6){
           const nx = dx/dist, ny = dy/dist;
           const overlap = minDist - dist;
@@ -927,7 +946,7 @@
     const s = physics.scale;
     const now = performance.now();
     ctx.clearRect(0, 0, physics.canvas.width, physics.canvas.height);
-    const d = STAR_R * 2.5 * s;
+    const d = effectiveStarRadius() * 2.5 * s;
     // cheap drop-shadow: one offset low-opacity black pass, far faster than
     // ctx.shadowBlur (which is a per-draw convolution and gets very slow
     // once there are dozens of stars on screen).
@@ -936,9 +955,11 @@
     for(const star of physics.stars){
       let fade = 1, rise = 0;
       if(star.removing){
-        const progress = Math.min(1, (now-star.removeStart)/REMOVE_FADE_MS);
-        fade = 1 - progress;
-        rise = progress * REMOVE_RISE_DIST;
+        const elapsed = now - star.removeStart;
+        const fadeProgress = Math.min(1, Math.max(0, (elapsed - REMOVE_FADE_DELAY_MS) / REMOVE_FADE_MS));
+        const riseProgress = Math.min(1, elapsed / REMOVE_TOTAL_MS);
+        fade = 1 - fadeProgress;
+        rise = riseProgress * REMOVE_RISE_DIST;
       }
       ctx.globalAlpha = 0.28 * fade;
       ctx.save();
@@ -950,9 +971,11 @@
     for(const star of physics.stars){
       let fade = 1, rise = 0;
       if(star.removing){
-        const progress = Math.min(1, (now-star.removeStart)/REMOVE_FADE_MS);
-        fade = 1 - progress;
-        rise = progress * REMOVE_RISE_DIST;
+        const elapsed = now - star.removeStart;
+        const fadeProgress = Math.min(1, Math.max(0, (elapsed - REMOVE_FADE_DELAY_MS) / REMOVE_FADE_MS));
+        const riseProgress = Math.min(1, elapsed / REMOVE_TOTAL_MS);
+        fade = 1 - fadeProgress;
+        rise = riseProgress * REMOVE_RISE_DIST;
       }
       ctx.globalAlpha = fade;
       const img = getTintedStar(star.color || '#ffc94a');
@@ -1000,9 +1023,10 @@
   }
 
   function spawnOneStar(color){
-    const jitterRange = Math.max(2, 9 - STAR_R * 0.4);
+    const starRadius = effectiveStarRadius();
+    const jitterRange = Math.max(2, 9 - starRadius * 0.4);
     const jitter = (Math.random()-0.5) * jitterRange;
-    const p = safeSpawnPoint(POUR_POINT.x + jitter, POUR_POINT.y - 8, STAR_R + 3);
+    const p = safeSpawnPoint(POUR_POINT.x + jitter, POUR_POINT.y - 8, starRadius + 3);
     physics.stars.push({
       x: p.x,
       y: p.y,
