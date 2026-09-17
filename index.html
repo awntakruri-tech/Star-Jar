@@ -341,9 +341,10 @@
   .settings-panel{
     background:var(--panel); width:100%; max-width:520px; max-height:88vh; overflow-y:auto;
     border-radius:26px 26px 0 0; padding:20px 20px 32px;
-    transform:translateY(30px); transition:transform 0.3s cubic-bezier(.34,1.2,.64,1);
+    transform:translateY(30px); transition:transform 0.3s cubic-bezier(.34,1.2,.64,1), opacity 0.15s ease;
   }
   .settings-overlay.open .settings-panel{ transform:translateY(0); }
+  .settings-panel.star-size-adjusting{ opacity:0.5; }
   .settings-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; }
   .settings-header h2{ font-family:'Fredoka',sans-serif; font-size:20px; margin:0; }
   .close-btn{ width:34px;height:34px;border-radius:50%; background:var(--panel-2); font-size:18px; display:flex;align-items:center;justify-content:center; }
@@ -1315,7 +1316,7 @@
       '</select>';
   }
 
-  function renderSequenceHud(){
+  function renderSequenceHud(scheduleCompletionFade = true){
     const visible = sequenceQueue.length > 0;
     sequenceHudEl.classList.toggle('visible', visible);
     sequenceHudEl.classList.toggle('showing', visible);
@@ -1327,7 +1328,7 @@
       ? 'Sequence complete'
       : ('Step ' + (sequenceIndex + 1) + ' of ' + sequenceQueue.length + ' — ' + (sequenceQueue.length - sequenceIndex) + ' left');
     sequenceDotsEl.innerHTML = sequenceQueue.map((item, i)=>'<span class="sequence-dot '+(i<sequenceIndex?'done ':'')+(i===sequenceIndex?'current':'')+'" title="Step '+(i+1)+'"></span>').join('');
-    if(sequenceIndex >= sequenceQueue.length && !sequenceFadeTimer){
+    if(scheduleCompletionFade && sequenceIndex >= sequenceQueue.length && !sequenceFadeTimer){
       sequenceFadeTimer = setTimeout(()=>{
         sequenceHudEl.classList.remove('showing');
         setTimeout(()=>{
@@ -1531,7 +1532,7 @@
     osc.type = 'sine';
     osc.frequency.setValueAtTime(920, ctx.currentTime);
     gain.gain.setValueAtTime(0.0001, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.13, ctx.currentTime + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.65, ctx.currentTime + 0.008);
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.075);
     osc.connect(gain).connect(ctx.destination);
     osc.start();
@@ -1546,8 +1547,8 @@
     const start = ctx.currentTime;
     osc.type = 'sawtooth';
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.linearRampToValueAtTime(0.18, start + 0.05);
-    gain.gain.setValueAtTime(0.18, start + 2.25);
+    gain.gain.linearRampToValueAtTime(0.06, start + 0.05);
+    gain.gain.setValueAtTime(0.06, start + 2.25);
     gain.gain.exponentialRampToValueAtTime(0.0001, start + 2.5);
     for(let i=0;i<8;i++){
       const t = start + i * 0.31;
@@ -1759,7 +1760,7 @@
     if(!sequenceQueue.length || sequenceBusy || sequenceIndex >= sequenceQueue.length) return;
     sequenceBusy = true;
     const item = sequenceQueue[sequenceIndex++];
-    renderSequenceHud();
+    renderSequenceHud(false);
     await runSequenceItem(item);
     sequenceBusy = false;
     renderSequenceHud();
@@ -2273,6 +2274,9 @@
       startValue: input.value,
       cancelled: false
     };
+    if(input.id === 'starSizeSlider'){
+      document.querySelector('.settings-panel').classList.add('star-size-adjusting');
+    }
   }, true);
   document.addEventListener('pointermove', (e)=>{
     const gesture = activeRangeGesture;
@@ -2290,6 +2294,9 @@
     if(!activeRangeGesture || activeRangeGesture.pointerId !== e.pointerId) return;
     const gesture = activeRangeGesture;
     activeRangeGesture = null;
+    if(gesture.input.id === 'starSizeSlider'){
+      document.querySelector('.settings-panel').classList.remove('star-size-adjusting');
+    }
     if(gesture.cancelled){
       gesture.input.disabled = false;
       gesture.input.value = gesture.startValue;
@@ -2302,6 +2309,15 @@
     STAR_R = parseFloat(e.target.value);
     state.starSize = STAR_R;
     document.getElementById('starSizeValue').textContent = STAR_R.toFixed(1);
+    physics.stars.forEach(star=>{
+      if(star.removing) return;
+      wake(star);
+      star.vy = Math.max(star.vy, 45);
+      star.restTime = 0;
+      star.settleClock = 0;
+      star.settleX = star.x;
+      star.settleY = star.y;
+    });
     saveState();
   });
   document.getElementById('removeCountSlider').addEventListener('input', (e)=>{
