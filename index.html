@@ -134,6 +134,7 @@
     margin-bottom:8px;
   }
   .timer-hud.running .timer-counter{ animation:timerGlow 0.9s ease-in-out infinite; }
+  .timer-hud.canceled .timer-counter{ color:#2f9a62; text-shadow:0 1px 0 #fff, 0 0 10px rgba(47,154,98,0.35); }
   .timer-track{ height:16px; padding:3px; border-radius:12px; background:rgba(255,255,255,0.8); box-shadow:0 2px 8px rgba(90,20,30,0.18); }
   .timer-fill{ height:100%; width:100%; border-radius:9px; background:#d73d4d; transform-origin:left center; transform:scaleX(1); transition:transform 0.15s linear; }
   .timer-status{ font-size:12px; font-weight:800; color:#8f3340; margin-top:5px; }
@@ -1542,15 +1543,17 @@
 
   function renderTimerHud(){
     if(timerStatus === 'idle'){
-      timerHudEl.classList.remove('visible','running');
+      timerHudEl.classList.remove('visible','running','canceled');
       return;
     }
     timerHudEl.classList.add('visible');
     timerHudEl.classList.toggle('running', timerStatus === 'running');
+    timerHudEl.classList.toggle('canceled', timerStatus === 'canceled');
     timerCounterEl.textContent = formatTimer(timerRemainingMs);
     timerFillEl.style.transform = 'scaleX(' + (timerDurationMs ? Math.max(0, timerRemainingMs / timerDurationMs) : 1) + ')';
     timerStatusEl.textContent = timerStatus === 'ready' ? 'Tap the jar to start' :
-      timerStatus === 'paused' ? 'Paused — hold for 2 seconds to cancel' : 'Running';
+      timerStatus === 'paused' ? 'Paused — hold for 2 seconds to cancel' :
+      timerStatus === 'canceled' ? 'Timer canceled' : 'Running';
   }
 
   let audioContext = null;
@@ -1653,17 +1656,42 @@
     renderTimerHud();
   }
 
-  function giveBackTimerStars(count){
+  async function giveBackTimerStars(count){
     const amount = Math.max(0, Math.min(count, state.goalStars - state.currentStars));
-    if(amount <= 0) return;
+    // Keep the green cancellation indicator visible before any reward/stat change.
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    if(amount <= 0){
+      timerStatus = 'idle';
+      renderTimerHud();
+      return;
+    }
+    const wasCompleteBefore = state.currentStars >= state.goalStars;
     const colors = evenRandomColors(amount, ['#ffc94a']);
+    triggerTapPulse();
     state.currentStars += amount;
+    state.allTimeStars += amount;
     colors.forEach(color => state.currentStarColors.push(color));
     renderStats();
     renderCone();
     saveState();
     coneWrap.style.pointerEvents = 'none';
-    addStars(amount, colors).then(()=>{ coneWrap.style.pointerEvents = ''; });
+    timerStatus = 'idle';
+    renderTimerHud();
+    await showStarPreview(amount, colors);
+    await addStars(amount, colors);
+    await new Promise(resolve => setTimeout(resolve, 550));
+    coneWrap.style.pointerEvents = '';
+    const rect = coneWrap.getBoundingClientRect();
+    const cx = rect.left + rect.width/2, cy = rect.top + rect.height*0.45;
+    const nowComplete = state.currentStars >= state.goalStars;
+    if(nowComplete && !wasCompleteBefore){
+      renderCone();
+      confettiBurst(cx, cy, 24);
+      sparkleBurst(cx, cy, 20);
+    } else {
+      renderCone();
+      sparkleBurst(cx, cy, 8);
+    }
   }
 
   function cancelTimer(){
@@ -1672,14 +1700,19 @@
     const shouldRefund = state.timerRefundOnCancel === true;
     stopTimerFrame();
     ++timerSession;
-    timerStatus = 'idle';
-    timerRemainingMs = 0;
+    timerStatus = 'canceled';
     timerRemovalCount = 0;
     state.armedRemoveCount = null;
     renderCone();
     suppressNextConeClick = true;
     renderTimerHud();
     if(shouldRefund) giveBackTimerStars(refundCount);
+    else setTimeout(()=>{
+      if(timerStatus === 'canceled'){
+        timerStatus = 'idle';
+        renderTimerHud();
+      }
+    }, 3000);
     setTimeout(()=>{ suppressNextConeClick = false; }, 600);
   }
 
@@ -2049,6 +2082,7 @@
       resumeTimer();
       return;
     }
+    if(timerStatus === 'canceled') return;
     if(sequenceQueue.length && sequenceIndex < sequenceQueue.length){
       advanceSequence();
       return;
@@ -2213,7 +2247,7 @@
       slotFiveHoldPointerId = null;
       resetSecretStage();
       openSettings();
-    }, 2500);
+    }, 1250);
   });
   slotsRowEl.addEventListener('pointerup', clearSlotFiveHold);
   slotsRowEl.addEventListener('pointercancel', clearSlotFiveHold);
