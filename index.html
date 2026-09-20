@@ -463,6 +463,8 @@
   .timer-field{ flex:1; }
   .timer-field label{ display:block; font-size:11px; font-weight:800; color:var(--ink-soft); margin-bottom:4px; }
   .timer-field input{ width:100%; box-sizing:border-box; padding:9px 10px; border:2px solid #e5d7ee; border-radius:10px; font-size:16px; font-weight:800; text-align:center; }
+  .timer-refund-option{ display:flex; align-items:flex-start; gap:8px; font-size:12px; line-height:1.25; font-weight:700; color:#8f3340; }
+  .timer-refund-option input{ margin:1px 0 0; accent-color:#d73d4d; }
   .storage-note{ font-size:11px; color:var(--ink-soft); text-align:center; margin-top:16px; }
 </style>
 </head>
@@ -553,6 +555,7 @@
         <div class="timer-field"><label for="sirenAtInput">Siren with seconds left</label><input id="sirenAtInput" type="number" min="0" max="3600" step="1" value="10"></div>
       </div>
       <button class="btn-reset" id="activateTimerBtn" style="border-radius:14px; padding:11px; font-weight:800;">Activate timer</button>
+      <label class="timer-refund-option"><input type="checkbox" id="timerRefundOnCancel"> If canceled, give back the stars this timer was going to remove</label>
       <div class="settings-tip" style="margin:0; font-size:11px;">Tap the jar to start. Tap again to pause; hold the paused timer for 2 seconds to cancel.</div>
     </div>
 
@@ -686,6 +689,8 @@
     armedRedeem: false,
     currentStars: 0,
     currentStarColors: [],
+    currentStarsByPrize: null,
+    currentStarColorsByPrize: null,
     goalStars: 10,
     prizeType: 'icecream',
     slotsFilledByPrize: { icecream: 0, chips: 0 },
@@ -693,7 +698,8 @@
     starSize: 6.2,
     timerMinutes: 0,
     timerSeconds: 30,
-    sirenAtSeconds: 10
+    sirenAtSeconds: 10,
+    timerRefundOnCancel: false
   };
   let wasComplete = false;
 
@@ -754,19 +760,37 @@
   // differently-shaped bag).
   function setActivePrize(prizeId){
     if(!PRIZES[prizeId]) return;
+    syncActivePrizeProgress();
     applyPrizeConfig(prizeId);
 
     state.prizeType = prizeId;
-    state.currentStars = 0;
-    state.currentStarColors = [];
+    ensurePrizeProgress();
+    state.currentStars = state.currentStarsByPrize[prizeId] || 0;
+    state.currentStarColors = state.currentStarColorsByPrize[prizeId].slice();
     clearStars();
     resetConeVisual();
 
     resizePhysicsCanvas();
+    syncStarsInstant(state.currentStars);
     renderSlots();
     renderCone();
     renderStats();
     saveState();
+  }
+
+  function ensurePrizeProgress(){
+    if(!state.currentStarsByPrize || typeof state.currentStarsByPrize !== 'object') state.currentStarsByPrize = {};
+    if(!state.currentStarColorsByPrize || typeof state.currentStarColorsByPrize !== 'object') state.currentStarColorsByPrize = {};
+    Object.keys(PRIZES).forEach(id=>{
+      if(!Number.isFinite(Number(state.currentStarsByPrize[id]))) state.currentStarsByPrize[id] = 0;
+      if(!Array.isArray(state.currentStarColorsByPrize[id])) state.currentStarColorsByPrize[id] = [];
+    });
+  }
+
+  function syncActivePrizeProgress(){
+    ensurePrizeProgress();
+    state.currentStarsByPrize[state.prizeType] = state.currentStars;
+    state.currentStarColorsByPrize[state.prizeType] = Array.isArray(state.currentStarColors) ? state.currentStarColors.slice() : [];
   }
 
   function initPhysics(){
@@ -1246,6 +1270,19 @@
       b.color = b.colors[0];
     });
 
+    if(!PRIZES[state.prizeType]) state.prizeType = 'icecream';
+    if(!state.currentStarsByPrize || typeof state.currentStarsByPrize !== 'object'){
+      state.currentStarsByPrize = {};
+      state.currentStarsByPrize[state.prizeType] = Number(state.currentStars) || 0;
+    }
+    if(!state.currentStarColorsByPrize || typeof state.currentStarColorsByPrize !== 'object'){
+      state.currentStarColorsByPrize = {};
+      state.currentStarColorsByPrize[state.prizeType] = Array.isArray(state.currentStarColors) ? state.currentStarColors.slice() : [];
+    }
+    ensurePrizeProgress();
+    state.currentStars = state.currentStarsByPrize[state.prizeType] || 0;
+    state.currentStarColors = state.currentStarColorsByPrize[state.prizeType].slice();
+
     // Backfill for saves made before per-star colors were tracked (or if
     // the count and color list ever drift apart) - pad/trim so the color
     // list always matches how many stars are actually in the jar.
@@ -1260,15 +1297,16 @@
     if(!state.slotsFilledByPrize){
       state.slotsFilledByPrize = { icecream: state.slotsFilled || 0, chips: 0 };
     }
-    if(!PRIZES[state.prizeType]) state.prizeType = 'icecream';
     const savedTimerMinutes = Number(state.timerMinutes);
     const savedTimerSeconds = Number(state.timerSeconds);
     const savedSirenAtSeconds = Number(state.sirenAtSeconds);
     state.timerMinutes = Number.isFinite(savedTimerMinutes) ? Math.max(0, Math.min(99, savedTimerMinutes)) : 0;
     state.timerSeconds = Number.isFinite(savedTimerSeconds) ? Math.max(0, Math.min(59, savedTimerSeconds)) : 30;
     state.sirenAtSeconds = Number.isFinite(savedSirenAtSeconds) ? Math.max(0, savedSirenAtSeconds) : 10;
+    state.timerRefundOnCancel = state.timerRefundOnCancel === true;
   }
   async function saveState(){
+    syncActivePrizeProgress();
     if(localStorageOK){
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
       catch(err){ /* storage full or blocked */ }
@@ -1615,8 +1653,23 @@
     renderTimerHud();
   }
 
+  function giveBackTimerStars(count){
+    const amount = Math.max(0, Math.min(count, state.goalStars - state.currentStars));
+    if(amount <= 0) return;
+    const colors = evenRandomColors(amount, ['#ffc94a']);
+    state.currentStars += amount;
+    colors.forEach(color => state.currentStarColors.push(color));
+    renderStats();
+    renderCone();
+    saveState();
+    coneWrap.style.pointerEvents = 'none';
+    addStars(amount, colors).then(()=>{ coneWrap.style.pointerEvents = ''; });
+  }
+
   function cancelTimer(){
     if(timerStatus !== 'paused') return;
+    const refundCount = timerRemovalCount;
+    const shouldRefund = state.timerRefundOnCancel === true;
     stopTimerFrame();
     ++timerSession;
     timerStatus = 'idle';
@@ -1626,6 +1679,7 @@
     renderCone();
     suppressNextConeClick = true;
     renderTimerHud();
+    if(shouldRefund) giveBackTimerStars(refundCount);
     setTimeout(()=>{ suppressNextConeClick = false; }, 600);
   }
 
@@ -1648,13 +1702,13 @@
     const seconds = Math.max(0, Math.min(59, parseInt(document.getElementById('timerSecondsInput').value, 10) || 0));
     const totalSeconds = minutes * 60 + seconds;
     if(totalSeconds <= 0) return;
-    timerRemovalCount = Math.max(1, parseInt(document.getElementById('removeCountSlider').value, 10) || 1);
+    timerRemovalCount = Math.min(Math.max(0, parseInt(document.getElementById('removeCountSlider').value, 10) || 0), state.currentStars);
     state.timerMinutes = minutes;
     state.timerSeconds = seconds;
     state.sirenAtSeconds = Math.max(0, parseInt(document.getElementById('sirenAtInput').value, 10) || 0);
     state.armedId = null;
     state.armedRedeem = false;
-    state.armedRemoveCount = timerRemovalCount;
+    state.armedRemoveCount = timerRemovalCount || null;
     timerDurationMs = totalSeconds * 1000;
     timerRemainingMs = timerDurationMs;
     timerStatus = 'ready';
@@ -1714,13 +1768,13 @@
     const seconds = Math.max(0, Math.min(59, parseInt(document.getElementById('timerSecondsInput').value, 10) || state.timerSeconds || 0));
     const totalSeconds = minutes * 60 + seconds;
     if(totalSeconds <= 0) return false;
-    timerRemovalCount = Math.max(1, parseInt(document.getElementById('removeCountSlider').value, 10) || 1);
+    timerRemovalCount = Math.min(Math.max(0, parseInt(document.getElementById('removeCountSlider').value, 10) || 0), state.currentStars);
     state.timerMinutes = minutes;
     state.timerSeconds = seconds;
     state.sirenAtSeconds = Math.max(0, parseInt(document.getElementById('sirenAtInput').value, 10) || 0);
     state.armedId = null;
     state.armedRedeem = false;
-    state.armedRemoveCount = timerRemovalCount;
+    state.armedRemoveCount = timerRemovalCount || null;
     timerDurationMs = totalSeconds * 1000;
     timerRemainingMs = timerDurationMs;
     timerStatus = 'ready';
@@ -2219,6 +2273,7 @@
     document.getElementById('timerMinutesInput').value = state.timerMinutes;
     document.getElementById('timerSecondsInput').value = state.timerSeconds;
     document.getElementById('sirenAtInput').value = state.sirenAtSeconds;
+    document.getElementById('timerRefundOnCancel').checked = state.timerRefundOnCancel === true;
     const armBtn = document.getElementById('armRemoveBtn');
     armBtn.textContent = state.armedRemoveCount
       ? ('Armed ✓ — next tap removes ' + state.armedRemoveCount)
@@ -2324,6 +2379,10 @@
     document.getElementById('removeCountValue').textContent = e.target.value;
   });
   document.getElementById('activateTimerBtn').addEventListener('click', activateTimer);
+  document.getElementById('timerRefundOnCancel').addEventListener('change', (e)=>{
+    state.timerRefundOnCancel = e.target.checked;
+    saveState();
+  });
   document.getElementById('armRemoveBtn').addEventListener('click', ()=>{
     const n = parseInt(document.getElementById('removeCountSlider').value, 10);
     state.armedId = null;
